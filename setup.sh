@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# WRE Claude staff setup script.
+# WorksOS Claude staff setup script.
 # Idempotent: run it, follow any prompts (install Xcode CLT, run gh auth login),
 # then re-run. Each run advances as far as it can given current state.
-# Final state: ~/dev/wre-dashboards exists, dependencies installed, ready for Claude.
+# Final state: ~/dev/works-os/frontend exists, dependencies installed, ready for Claude.
 
 set -euo pipefail
 
-REPO="works-real-estate/wre-dashboards"
-TARGET_DIR="$HOME/dev/wre-dashboards"
+REPO="works-os/frontend"
+TARGET_DIR="$HOME/dev/works-os/frontend"
 MIN_NODE_MAJOR=22
 
 cyan()  { printf "\033[36m%s\033[0m\n" "$1"; }
@@ -32,7 +32,7 @@ if ! xcode-select -p &>/dev/null; then
 fi
 green "✓ Xcode Command Line Tools"
 
-# --- Stage 2: Node 20+ ---
+# --- Stage 2: Node 22+ ---
 node_ok=false
 if command -v node &>/dev/null; then
   NODE_MAJOR=$(node -v | sed 's/^v//' | cut -d. -f1)
@@ -49,8 +49,8 @@ if ! $node_ok; then
   NODE_VERSION=$(curl -fsSL "https://nodejs.org/dist/latest-v22.x/" \
     | grep -oE "node-v22\.[0-9]+\.[0-9]+\.pkg" | head -1 | sed 's/node-//;s/\.pkg//')
   if [ -z "$NODE_VERSION" ]; then
-    red "Failed to detect latest Node 20.x version from nodejs.org."
-    red "Install Node 20 LTS manually from https://nodejs.org/ and re-run."
+    red "Failed to detect latest Node 22.x version from nodejs.org."
+    red "Install Node 22 LTS manually from https://nodejs.org/ and re-run."
     exit 1
   fi
   NODE_PKG="/tmp/node-${NODE_VERSION}.pkg"
@@ -93,7 +93,7 @@ fi
 green "✓ gh authenticated"
 
 # --- Stage 5: Clone repo ---
-mkdir -p "$HOME/dev"
+mkdir -p "$HOME/dev/works-os"
 if [ -d "$TARGET_DIR" ]; then
   green "✓ Repo already cloned at $TARGET_DIR"
 else
