@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
-# WorksOS Claude staff setup script.
-# Idempotent: run it, follow any prompts (install Xcode CLT, run gh auth login),
-# then re-run. Each run advances as far as it can given current state.
-# Final state: ~/dev/works-os/frontend exists, dependencies installed, ready for Claude.
+# WorksOS Claude staff setup script (macOS).
+#
+# Sudo-free: installs everything into your user space — NO Mac password needed.
+# Idempotent: run it, do any one-time action it asks for, then run it again.
+# It never waits on a typed prompt — at each human step it explains, then exits
+# so it can be re-run (so it works whether a person or Claude-in-Cowork runs it).
+#
+# Final state: ~/dev/works-os/frontend cloned + deps installed, GitHub authed,
+# ready to open in the Claude app's Code tab (Local).
 
 set -euo pipefail
 
 REPO="works-os/frontend"
-TARGET_DIR="$HOME/dev/works-os/frontend"
-MIN_NODE_MAJOR=22
+WORKDIR="$HOME/dev/works-os"
+TARGET_DIR="$WORKDIR/frontend"
+NODE_MAJOR=22
+LOCAL_BIN="$HOME/.local/bin"
+ZSHRC="$HOME/.zshrc"
+NVM_PIN="v0.40.1"
 
 cyan()  { printf "\033[36m%s\033[0m\n" "$1"; }
 red()   { printf "\033[31m%s\033[0m\n" "$1"; }
@@ -20,102 +29,103 @@ case "$(uname -m)" in
   *) red "Unsupported architecture: $(uname -m)"; exit 1 ;;
 esac
 
-# --- Stage 1: Xcode Command Line Tools (manual install) ---
+ensure_zshrc_line() { grep -qF "$1" "$ZSHRC" 2>/dev/null || echo "$1" >> "$ZSHRC"; }
+
+# --- Stage 1: Xcode Command Line Tools (one-time GUI click, no password) ---
 if ! xcode-select -p &>/dev/null; then
-  red "Xcode Command Line Tools are not installed."
+  red "First, macOS needs the Command Line Tools (they provide git)."
   echo ""
-  echo "Run this in Terminal, click through the GUI prompt, and wait for the install to finish:"
-  echo "  xcode-select --install"
+  echo "A small Apple window will pop up — click \"Install\" and wait for it to finish."
+  xcode-select --install 2>/dev/null || true
   echo ""
-  echo "Then re-run this setup script."
+  echo "When it's done, run this setup again."
   exit 1
 fi
-green "✓ Xcode Command Line Tools"
+green "✓ Command Line Tools"
 
-# --- Stage 2: Node 22+ ---
+# --- Stage 2: Node $NODE_MAJOR via nvm (no sudo) ---
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
 node_ok=false
 if command -v node &>/dev/null; then
-  NODE_MAJOR=$(node -v | sed 's/^v//' | cut -d. -f1)
-  if [ "$NODE_MAJOR" -ge "$MIN_NODE_MAJOR" ]; then
-    node_ok=true
-    green "✓ Node $(node -v)"
-  else
-    cyan "Node $MIN_NODE_MAJOR+ required (you have $(node -v)). Installing newer version..."
-  fi
+  CUR=$(node -v | sed 's/^v//' | cut -d. -f1)
+  [ "$CUR" -ge "$NODE_MAJOR" ] && { node_ok=true; green "✓ Node $(node -v)"; }
 fi
-
 if ! $node_ok; then
-  cyan "Installing Node $MIN_NODE_MAJOR LTS (may prompt for your Mac password)..."
-  NODE_VERSION=$(curl -fsSL "https://nodejs.org/dist/latest-v22.x/" \
-    | grep -oE "node-v22\.[0-9]+\.[0-9]+\.pkg" | head -1 | sed 's/node-//;s/\.pkg//')
-  if [ -z "$NODE_VERSION" ]; then
-    red "Failed to detect latest Node 22.x version from nodejs.org."
-    red "Install Node 22 LTS manually from https://nodejs.org/ and re-run."
-    exit 1
+  if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+    cyan "Installing nvm (Node manager) — no password needed..."
+    curl -fsSL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_PIN}/install.sh" | bash
+    export NVM_DIR="$HOME/.nvm"
+    . "$NVM_DIR/nvm.sh"
   fi
-  NODE_PKG="/tmp/node-${NODE_VERSION}.pkg"
-  curl -fsSL -o "$NODE_PKG" "https://nodejs.org/dist/latest-v22.x/node-${NODE_VERSION}.pkg"
-  sudo installer -pkg "$NODE_PKG" -target /
-  rm -f "$NODE_PKG"
-  green "✓ Node ${NODE_VERSION} installed"
+  cyan "Installing Node $NODE_MAJOR..."
+  nvm install "$NODE_MAJOR" >/dev/null
+  nvm alias default "$NODE_MAJOR" >/dev/null
+  green "✓ Node $(node -v) installed"
 fi
 
-# --- Stage 3: GitHub CLI ---
+# --- Stage 3: GitHub CLI via tarball -> ~/.local/bin (no sudo) ---
+mkdir -p "$LOCAL_BIN"
+ensure_zshrc_line 'export PATH="$HOME/.local/bin:$PATH"'
+export PATH="$LOCAL_BIN:$PATH"
 if ! command -v gh &>/dev/null; then
-  cyan "Installing GitHub CLI (may prompt for your Mac password)..."
-  GH_VERSION=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest \
+  cyan "Installing GitHub CLI — no password needed..."
+  GH_VER=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest \
     | grep '"tag_name"' | head -1 | sed -E 's/.*"v([^"]+)".*/\1/')
-  if [ -z "$GH_VERSION" ]; then
-    red "Failed to detect latest gh CLI version."
-    red "Install gh CLI manually from https://cli.github.com/ and re-run."
-    exit 1
-  fi
-  GH_PKG="/tmp/gh_${GH_VERSION}_macOS_${GH_ARCH}.pkg"
-  curl -fsSL -o "$GH_PKG" \
-    "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_macOS_${GH_ARCH}.pkg"
-  sudo installer -pkg "$GH_PKG" -target /
-  rm -f "$GH_PKG"
-  green "✓ gh CLI ${GH_VERSION} installed"
+  [ -n "$GH_VER" ] || { red "Couldn't detect the latest gh version."; exit 1; }
+  TMP=$(mktemp -d)
+  curl -fsSL -o "$TMP/gh.zip" \
+    "https://github.com/cli/cli/releases/download/v${GH_VER}/gh_${GH_VER}_macOS_${GH_ARCH}.zip"
+  unzip -q "$TMP/gh.zip" -d "$TMP"
+  cp "$TMP/gh_${GH_VER}_macOS_${GH_ARCH}/bin/gh" "$LOCAL_BIN/gh"
+  chmod +x "$LOCAL_BIN/gh"
+  rm -rf "$TMP"
+  green "✓ gh CLI ${GH_VER} installed"
 else
   green "✓ gh CLI $(gh --version | head -1 | awk '{print $3}')"
 fi
 
-# --- Stage 4: gh auth (manual login) ---
+# --- Stage 4: GitHub login (browser; no password, no token to paste) ---
 if ! gh auth status &>/dev/null; then
-  red "GitHub CLI is not authenticated."
+  red "One more step: connect your GitHub account."
   echo ""
-  echo "Run this in Terminal, follow the browser prompts, and finish the login:"
-  echo "  gh auth login"
-  echo ""
-  echo "Then re-run this setup script."
+  echo "Run this (Claude can run it for you):"
+  echo "    gh auth login --hostname github.com --git-protocol https --web"
+  echo "It shows a one-time code — open https://github.com/login/device,"
+  echo "enter the code, and authorize. Then run this setup again."
   exit 1
 fi
-green "✓ gh authenticated"
+green "✓ GitHub authenticated as $(gh api user --jq .login 2>/dev/null)"
 
-# --- Stage 5: Clone repo ---
-mkdir -p "$HOME/dev/works-os"
-if [ -d "$TARGET_DIR" ]; then
-  green "✓ Repo already cloned at $TARGET_DIR"
+# --- Stage 5: Clone the project ---
+mkdir -p "$WORKDIR"
+if [ -d "$TARGET_DIR/.git" ]; then
+  green "✓ Project already at $TARGET_DIR"
 else
-  cyan "Cloning $REPO..."
+  cyan "Getting the project ($REPO)..."
   gh repo clone "$REPO" "$TARGET_DIR"
-  green "✓ Cloned"
+  green "✓ Cloned to $TARGET_DIR"
 fi
-
 cd "$TARGET_DIR"
 
-# --- Stage 6: npm install ---
-cyan "Running npm install (may take a few minutes)..."
+# --- Stage 6: Dependencies ---
+cyan "Installing project dependencies (a few minutes the first time)..."
 npm install
 green "✓ Dependencies installed"
 
+# --- Stage 7: Validate it actually works ---
+cyan "Checking everything..."
+fail=0
+gh auth status &>/dev/null              || { red "✗ GitHub login"; fail=1; }
+gh repo view "$REPO" &>/dev/null         || { red "✗ Can't reach $REPO — you may need access (ask #dev)"; fail=1; }
+command -v node &>/dev/null              || { red "✗ Node"; fail=1; }
+[ -d "$TARGET_DIR/node_modules" ]        || { red "✗ Dependencies"; fail=1; }
+[ "$fail" -eq 0 ] || { red "Setup didn't fully complete — see the ✗ items above."; exit 1; }
+
 green ""
-green "Setup complete."
+green "✅ Setup confirmed — your Mac is ready."
+green "   • GitHub: $(gh api user --jq .login)"
+green "   • Project: $TARGET_DIR"
 green ""
-green "Next steps:"
-green "  1. Open Claude desktop app"
-green "  2. Click the Code tab"
-green "  3. New session"
-green "  4. Environment: Local"
-green "  5. Project folder: $TARGET_DIR"
-green ""
+green "Next: open the Claude app → Code tab → New session → Local → folder $TARGET_DIR"
