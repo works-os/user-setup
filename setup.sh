@@ -6,8 +6,9 @@
 # It never waits on a typed prompt — at each human step it explains, then exits
 # so it can be re-run (so it works whether a person or Claude-in-Cowork runs it).
 #
-# Final state: ~/dev/works-os/frontend cloned + deps installed, GitHub authed,
-# ready to open in the Claude app's Code tab (Local).
+# Final state: ~/dev/works-os/frontend set up as YOUR fork (origin) with the
+# real repo wired as 'upstream', deps installed, GitHub authed, ready to open
+# in the Claude app's Code tab (Local).
 
 set -euo pipefail
 
@@ -98,16 +99,29 @@ if ! gh auth status &>/dev/null; then
 fi
 green "✓ GitHub authenticated as $(gh api user --jq .login 2>/dev/null)"
 
-# --- Stage 5: Clone the project ---
+# --- Stage 5: Fork + clone the project ---
+# You're read-only on the real repo, so you work from your own fork:
+#   origin   -> your fork (you can push here)
+#   upstream -> $REPO (the real repo; read-only, the source of truth)
 mkdir -p "$WORKDIR"
 if [ -d "$TARGET_DIR/.git" ]; then
   green "✓ Project already at $TARGET_DIR"
+  cd "$TARGET_DIR"
+  # Make sure the real repo is wired as 'upstream' (legacy clones may lack it).
+  # If 'origin' still points at the real repo instead of your fork, Claude
+  # repairs that in-session — no need to untangle it here.
+  if ! git remote get-url upstream &>/dev/null; then
+    git remote add upstream "https://github.com/$REPO.git"
+    green "✓ Linked upstream ($REPO)"
+  fi
 else
-  cyan "Getting the project ($REPO)..."
-  gh repo clone "$REPO" "$TARGET_DIR"
-  green "✓ Cloned to $TARGET_DIR"
+  cyan "Setting up your copy of the project ($REPO)..."
+  # Forks to your account if you don't have one yet, clones the fork, and
+  # wires 'upstream' to the real repo automatically.
+  gh repo fork "$REPO" --clone -- "$TARGET_DIR"
+  green "✓ Forked and cloned to $TARGET_DIR"
+  cd "$TARGET_DIR"
 fi
-cd "$TARGET_DIR"
 
 # --- Stage 6: Dependencies ---
 cyan "Installing project dependencies (a few minutes the first time)..."
