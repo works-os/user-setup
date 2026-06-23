@@ -4,7 +4,8 @@
 # Sudo-free: installs everything into your user space — NO Mac password needed.
 # Idempotent: run it, do any one-time action it asks for, then run it again.
 # It never waits on a typed prompt — at each human step it explains, then exits
-# so it can be re-run (so it works whether a person or Claude-in-Cowork runs it).
+# so it can be re-run. A person runs it in Terminal — a Cowork/sandbox Claude
+# session can't (it has no access to your Mac, its tools, or your GitHub login).
 #
 # Final state: ~/dev/works-os/frontend set up as YOUR fork (origin) with the
 # real repo wired as 'upstream', deps installed, GitHub authed, ready to open
@@ -91,10 +92,12 @@ fi
 if ! gh auth status &>/dev/null; then
   red "One more step: connect your GitHub account."
   echo ""
-  echo "Run this (Claude can run it for you):"
+  echo "In Terminal, run:"
   echo "    gh auth login --hostname github.com --git-protocol https --web"
+  echo "If you see 'gh: command not found', open a NEW Terminal window and try"
+  echo "again — the tools were just installed and a fresh window picks them up."
   echo "It shows a one-time code — open https://github.com/login/device,"
-  echo "enter the code, and authorize. Then run this setup again."
+  echo "enter the code, and authorize. Then run this setup again (same window)."
   exit 1
 fi
 green "✓ GitHub authenticated as $(gh api user --jq .login 2>/dev/null)"
